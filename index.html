@@ -1,0 +1,416 @@
+<!DOCTYPE html>
+<html lang="hi">
+<head>
+    <meta charset="UTF-8">
+    <title>ऑनलाइन शतरंज</title>
+    <style>
+        body {
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+            background-color: #f0f0f0;
+            font-family: Arial, sans-serif;
+        }
+
+        .game-container {
+            display: flex;
+            gap: 20px;
+            align-items: flex-start;
+        }
+
+        .chess-board {
+            width: 560px;
+            height: 560px;
+            border: 3px solid #333;
+            display: grid;
+            grid-template-columns: repeat(8, 1fr);
+            box-shadow: 0 0 15px rgba(0,0,0,0.3);
+        }
+
+        .square {
+            width: 70px;
+            height: 70px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 50px;
+            cursor: pointer;
+            user-select: none;
+            transition: background-color 0.3s;
+        }
+
+        .white {
+            background-color: #f0d9b5;
+        }
+
+        .black {
+            background-color: #b58863;
+        }
+
+        .selected {
+            background-color: #7b61ff !important;
+        }
+
+        .possible-move {
+            position: relative;
+        }
+
+        .possible-move::after {
+            content: '';
+            position: absolute;
+            width: 20px;
+            height: 20px;
+            background-color: rgba(0,0,0,0.2);
+            border-radius: 50%;
+        }
+
+        .game-info {
+            background: white;
+            padding: 20px;
+            border-radius: 5px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+            width: 250px;
+        }
+
+        .controls {
+            margin-top: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        button {
+            padding: 10px;
+            cursor: pointer;
+        }
+
+        #gameIdDisplay {
+            font-weight: bold;
+            word-break: break-all;
+            margin: 10px 0;
+        }
+    </style>
+</head>
+<body>
+    <h1>ऑनलाइन शतरंज</h1>
+    
+    <div class="game-container">
+        <div class="chess-board" id="board"></div>
+        
+        <div class="game-info">
+            <div id="gameStatus">गेम तैयार कर रहा है...</div>
+            <div id="turnIndicator">चाल: सफेद</div>
+            <div id="playerColor">आपका रंग: निर्धारित हो रहा है...</div>
+            
+            <div class="controls">
+                <button id="newGameBtn">नया गेम बनाएं</button>
+                <div>या</div>
+                <input type="text" id="gameIdInput" placeholder="गेम आईडी दर्ज करें">
+                <button id="joinGameBtn">गेम में शामिल हों</button>
+                
+                <div id="gameIdDisplay"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Firebase SDK -->
+    <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-database.js"></script>
+    
+    <script>
+        // Firebase कॉन्फिगरेशन
+        const firebaseConfig = {
+            apiKey: "AIzaSyDzZ3Q6XQ6XQ6XQ6XQ6XQ6XQ6XQ6XQ6XQ6",
+            authDomain: "chess-game-demo.firebaseapp.com",
+            databaseURL: "https://chess-game-demo-default-rtdb.firebaseio.com",
+            projectId: "chess-game-demo",
+            storageBucket: "chess-game-demo.appspot.com",
+            messagingSenderId: "123456789012",
+            appId: "1:123456789012:web:abcdefghijklmnopqrstuvwxyz"
+        };
+
+        // Firebase इनिशियलाइज़ करें
+        firebase.initializeApp(firebaseConfig);
+        const database = firebase.database();
+
+        // DOM एलिमेंट्स
+        const board = document.getElementById('board');
+        const turnIndicator = document.getElementById('turnIndicator');
+        const gameStatus = document.getElementById('gameStatus');
+        const playerColorDisplay = document.getElementById('playerColor');
+        const newGameBtn = document.getElementById('newGameBtn');
+        const joinGameBtn = document.getElementById('joinGameBtn');
+        const gameIdInput = document.getElementById('gameIdInput');
+        const gameIdDisplay = document.getElementById('gameIdDisplay');
+
+        // गेम स्टेट
+        let gameId = null;
+        let playerColor = null;
+        let currentTurn = 'white';
+        let boardState = Array(8).fill().map(() => Array(8).fill(''));
+        let selectedPiece = null;
+        let gameRef = null;
+
+        // शतरंज के टुकड़ों की प्रारंभिक स्थिति
+        const initialPosition = [
+            ['♜','♞','♝','♛','♚','♝','♞','♜'],
+            ['♟','♟','♟','♟','♟','♟','♟','♟'],
+            ['','','','','','','',''],
+            ['','','','','','','',''],
+            ['','','','','','','',''],
+            ['','','','','','','',''],
+            ['♙','♙','♙','♙','♙','♙','♙','♙'],
+            ['♖','♘','♗','♕','♔','♗','♘','♖']
+        ];
+
+        // बोर्ड बनाएं
+        function createBoard() {
+            board.innerHTML = '';
+            for(let row = 0; row < 8; row++) {
+                for(let col = 0; col < 8; col++) {
+                    const square = document.createElement('div');
+                    square.className = `square ${(row + col) % 2 === 0 ? 'white' : 'black'}`;
+                    square.dataset.row = row;
+                    square.dataset.col = col;
+                    square.textContent = boardState[row][col];
+                    square.addEventListener('click', () => handleSquareClick(row, col));
+                    board.appendChild(square);
+                }
+            }
+        }
+
+        // स्क्वायर क्लिक हैंडलर
+        function handleSquareClick(row, col) {
+            if (!gameId || playerColor !== currentTurn) return;
+            
+            const piece = boardState[row][col];
+            
+            if (selectedPiece) {
+                // चाल चलने का प्रयास करें
+                if (isValidMove(selectedPiece.row, selectedPiece.col, row, col)) {
+                    movePiece(selectedPiece.row, selectedPiece.col, row, col);
+                    clearSelection();
+                } else {
+                    // अमान्य चाल, नया टुकड़ा चुनें
+                    selectPiece(row, col);
+                }
+            } else if (piece && isCorrectColor(piece)) {
+                // टुकड़ा चुनें
+                selectPiece(row, col);
+            }
+        }
+
+        // टुकड़ा चुनें
+        function selectPiece(row, col) {
+            clearSelection();
+            selectedPiece = { row, col };
+            
+            // चयनित स्क्वायर को हाइलाइट करें
+            const square = document.querySelector(`.square[data-row="${row}"][data-col="${col}"]`);
+            square.classList.add('selected');
+            
+            // संभावित चालें दिखाएं
+            showPossibleMoves(row, col);
+        }
+
+        // चाल चलें
+        function movePiece(fromRow, fromCol, toRow, toCol) {
+            // बोर्ड स्टेट अपडेट करें
+            const piece = boardState[fromRow][fromCol];
+            boardState[fromRow][fromCol] = '';
+            boardState[toRow][toCol] = piece;
+            
+            // फायरबेस पर अपडेट भेजें
+            gameRef.update({
+                boardState: boardState,
+                currentTurn: currentTurn === 'white' ? 'black' : 'white'
+            });
+        }
+
+        // सफाई
+        function clearSelection() {
+            document.querySelectorAll('.selected, .possible-move').forEach(el => {
+                el.classList.remove('selected', 'possible-move');
+            });
+            selectedPiece = null;
+        }
+
+        // संभावित चालें दिखाएं
+        function showPossibleMoves(row, col) {
+            for (let r = 0; r < 8; r++) {
+                for (let c = 0; c < 8; c++) {
+                    if (isValidMove(row, col, r, c)) {
+                        const square = document.querySelector(`.square[data-row="${r}"][data-col="${c}"]`);
+                        square.classList.add('possible-move');
+                    }
+                }
+            }
+        }
+
+        // चाल वैलिडेशन
+        function isValidMove(fromRow, fromCol, toRow, toCol) {
+            if (fromRow === toRow && fromCol === toCol) return false;
+            
+            const piece = boardState[fromRow][fromCol];
+            const targetPiece = boardState[toRow][toCol];
+            
+            if (targetPiece && isSameColor(piece, targetPiece)) return false;
+
+            const rowDiff = Math.abs(toRow - fromRow);
+            const colDiff = Math.abs(toCol - fromCol);
+
+            switch(piece.toLowerCase()) {
+                case '♙': return validatePawn(fromRow, fromCol, toRow, toCol, rowDiff, colDiff);
+                case '♖': return validateRook(fromRow, fromCol, toRow, toCol);
+                case '♘': return (rowDiff === 2 && colDiff === 1) || (rowDiff === 1 && colDiff === 2);
+                case '♗': return rowDiff === colDiff && clearDiagonal(fromRow, fromCol, toRow, toCol);
+                case '♕': return validateQueen(fromRow, fromCol, toRow, toCol);
+                case '♔': return rowDiff <= 1 && colDiff <= 1;
+                default: return false;
+            }
+        }
+
+        // प्यादा चाल वैलिडेशन
+        function validatePawn(fromRow, fromCol, toRow, toCol, rowDiff, colDiff) {
+            const direction = boardState[fromRow][fromCol] === '♙' ? -1 : 1;
+            const startRow = boardState[fromRow][fromCol] === '♙' ? 6 : 1;
+            const forward = (toRow - fromRow) * direction;
+
+            // सीधी चाल
+            if (colDiff === 0) {
+                if (forward === 1 && !boardState[toRow][toCol]) return true;
+                if (forward === 2 && fromRow === startRow && 
+                   !boardState[toRow][toCol] && 
+                   !boardState[fromRow + direction][fromCol]) return true;
+            }
+
+            // विकर्ण खाना खाना
+            if (colDiff === 1 && forward === 1 && boardState[toRow][toCol]) return true;
+
+            return false;
+        }
+
+        // हाथी चाल वैलिडेशन
+        function validateRook(fromRow, fromCol, toRow, toCol) {
+            if (fromRow !== toRow && fromCol !== toCol) return false;
+            return clearPath(fromRow, fromCol, toRow, toCol);
+        }
+
+        // रानी चाल वैलिडेशन
+        function validateQueen(fromRow, fromCol, toRow, toCol) {
+            return validateRook(fromRow, fromCol, toRow, toCol) || 
+                  (Math.abs(toRow - fromRow) === Math.abs(toCol - fromCol) && 
+                   clearDiagonal(fromRow, fromCol, toRow, toCol));
+        }
+
+        // रास्ता साफ है?
+        function clearPath(fromRow, fromCol, toRow, toCol) {
+            const rowStep = Math.sign(toRow - fromRow);
+            const colStep = Math.sign(toCol - fromCol);
+            
+            let row = fromRow + rowStep;
+            let col = fromCol + colStep;
+            
+            while (row !== toRow || col !== toCol) {
+                if (boardState[row][col]) return false;
+                row += rowStep;
+                col += colStep;
+            }
+            return true;
+        }
+
+        // विकर्ण रास्ता साफ है?
+        function clearDiagonal(fromRow, fromCol, toRow, toCol) {
+            const rowStep = Math.sign(toRow - fromRow);
+            const colStep = Math.sign(toCol - fromCol);
+            
+            let row = fromRow + rowStep;
+            let col = fromCol + colStep;
+            
+            while (row !== toRow && col !== toCol) {
+                if (boardState[row][col]) return false;
+                row += rowStep;
+                col += colStep;
+            }
+            return true;
+        }
+
+        // रंग समान है?
+        function isSameColor(piece1, piece2) {
+            return (piece1 === piece1.toLowerCase()) === (piece2 === piece2.toLowerCase());
+        }
+
+        // सही रंग का टुकड़ा?
+        function isCorrectColor(piece) {
+            const isWhite = piece === piece.toUpperCase();
+            return isWhite === (playerColor === 'white');
+        }
+
+        // गेम स्टेट अपडेट करें
+        function updateGameState(snapshot) {
+            const gameData = snapshot.val();
+            if (!gameData) return;
+            
+            boardState = gameData.boardState || initialPosition;
+            currentTurn = gameData.currentTurn || 'white';
+            
+            // UI अपडेट करें
+            createBoard();
+            turnIndicator.textContent = `चाल: ${currentTurn === 'white' ? 'सफेद' : 'काला'}`;
+            playerColorDisplay.textContent = `आपका रंग: ${playerColor === 'white' ? 'सफेद' : 'काला'}`;
+            
+            if (gameData.gameOver) {
+                gameStatus.textContent = `गेम समाप्त! विजेता: ${gameData.winner}`;
+            } else {
+                gameStatus.textContent = playerColor === currentTurn ? 
+                    "आपकी चाल है!" : "प्रतिद्वंद्वी की चाल, प्रतीक्षा करें...";
+            }
+        }
+
+        // नया गेम बनाएं
+        newGameBtn.addEventListener('click', () => {
+            gameId = Math.random().toString(36).substring(2, 10);
+            playerColor = 'white';
+            
+            gameRef = database.ref('games/' + gameId);
+            gameRef.set({
+                boardState: initialPosition,
+                currentTurn: 'white',
+                playerWhite: true,
+                playerBlack: false,
+                gameOver: false
+            });
+            
+            gameRef.on('value', updateGameState);
+            
+            gameIdDisplay.textContent = `गेम आईडी: ${gameId}`;
+            gameStatus.textContent = "गेम बनाया गया, दोस्त को आमंत्रित करें!";
+        });
+
+        // मौजूदा गेम में शामिल हों
+        joinGameBtn.addEventListener('click', () => {
+            const joinGameId = gameIdInput.value.trim();
+            if (!joinGameId) return;
+            
+            gameId = joinGameId;
+            playerColor = 'black';
+            
+            gameRef = database.ref('games/' + gameId);
+            gameRef.update({
+                playerBlack: true
+            });
+            
+            gameRef.on('value', updateGameState);
+            
+            gameIdDisplay.textContent = `गेम आईडी: ${gameId}`;
+            gameStatus.textContent = "गेम में शामिल हो गए!";
+        });
+
+        // प्रारंभिक बोर्ड बनाएं
+        createBoard();
+    </script>
+</body>
+  </html>
